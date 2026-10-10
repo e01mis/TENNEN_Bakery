@@ -1,0 +1,163 @@
+﻿<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>手機掃碼計點系統</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script><script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+body{margin:0;background:#f4f6f5;color:#202824;font:16px system-ui,'Noto Sans TC',sans-serif}header{background:#214f43;color:white;padding:18px}main{max-width:760px;margin:auto;padding:14px;display:grid;gap:14px}.card{background:white;border-radius:15px;padding:16px;box-shadow:0 2px 10px #0001}h1{font-size:22px;margin:0 0 5px}h2{font-size:17px;margin:0 0 12px}.hint,.status{font-size:13px;color:#5c6862;line-height:1.6}input,button{font:inherit;border-radius:10px;padding:11px;border:1px solid #d3dcd6}input{width:100%;box-sizing:border-box}button{background:#214f43;color:white;border:0;font-weight:650}button.secondary{background:#edf3ef;color:#214f43;border:1px solid #d3dcd6}.row{display:flex;gap:8px;align-items:center;margin-top:10px}.row>*{min-width:0}.pill{font-size:12px;background:#edf5f0;color:#214f43;border-radius:30px;padding:5px 9px}.stats{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0}.metric{background:#f0f5f2;border-radius:10px;padding:12px;font-size:12px;color:#58645e}.metric b{display:block;font-size:23px;color:#214f43;margin-top:4px}.tablewrap{overflow:auto}table{border-collapse:collapse;width:100%;font-size:14px}td,th{padding:9px 5px;border-bottom:1px solid #e7ece9;text-align:left}th{font-size:12px;color:#65716a}td.num,th.num{text-align:right;white-space:nowrap}.empty{text-align:center;color:#777;padding:25px 4px}.qty{display:flex;gap:5px;justify-content:flex-end;align-items:center}.qty button{padding:4px 9px}.danger{background:#a52d2d}.total{font-size:26px;font-weight:800;color:#214f43}.foot{text-align:center;font-size:12px;color:#68736d;padding:0 14px 20px}@media(min-width:650px){main{grid-template-columns:1fr 1fr}.wide{grid-column:1/-1}}
+#scanStatus{color:#d00000;}
+</style></head><body><header><h1>裕毛屋手機掃碼查詢商品點數</h1><div>此為單機版如有誤差點數以收銀為準・掃描國際條碼／貨號・自動累計商品換購點數</div></header><main>
+<section class="card"><h2>手機掃描商品</h2><p class="status" id="imp" role="status">正在載入商品資料…</p><span class="pill" id="count">商品 0 筆</span><div id="reader"></div><div class="row"><button id="start">開啟相機掃描</button><button class="secondary" id="stop" disabled>停止掃描</button></div><div class="row"><button id="holdScan" disabled style="width:100%;min-height:64px;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none" aria-pressed="false">按住掃描</button></div><p class="status" id="scanStatus" role="status">開啟相機後，按住「按住掃描」對準條碼；每次按住只計點一次。</p><div class="row"><button class="secondary" id="testSound">測試嗶聲</button></div><p class="status" id="soundStatus" role="status">音效尚未啟用：請點「測試嗶聲」或「開啟相機掃描」。若沒有聲音，請提高媒體音量並關閉靜音。</p><label class="hint">查詢類型</label><select id="lookupMode" aria-label="查詢類型" style="width:100%;font:inherit;padding:11px;border-radius:10px;border:1px solid #d3dcd6"><option value="auto">自動辨識：國際條碼／貨號</option><option value="barcode">國際條碼</option><option value="sku">貨號</option></select><p class="hint">貨號讀取 Excel C 欄，國際條碼讀取 D 欄。請掃描貨號的條碼圖形；印刷數字可手動輸入。</p><label class="hint">輸入條碼或貨號</label><div class="row"><input id="manual" placeholder="輸入或貼上國際條碼／貨號" inputmode="text"><button id="add">計點</button></div></section>
+<section class="card wide"><div class="row" style="justify-content:space-between;margin:0"><h2>本次計點清單</h2><button class="secondary" id="clear">清空清單</button></div><div class="stats"><div class="metric">商品種類<b id="kinds">0 種</b></div><div class="metric">商品總數<b id="qty">0 件</b></div><div class="metric">累計換購點數<b id="points">0 點</b></div><div class="metric">每次掃描<b>數量 +1</b></div></div><div class="tablewrap"><table><thead><tr><th>品名／貨號／國際條碼</th><th class="num">每件點數</th><th class="num">數量</th><th class="num">小計</th><th></th></tr></thead><tbody id="rows"><tr><td colspan="5" class="empty">尚未掃描商品</td></tr></tbody></table></div><div class="row"><button id="export" style="width:100%">匯出計點明細 CSV</button></div><p class="hint">點數小計＝O 欄換購點數 × 商品數量。此工具只做計點與明細匯出，不會直接寫入會員帳戶。</p></section></main><div class="foot">單機原型：重新整理可能清空本次清單，請先匯出明細。</div>
+<script>
+// 商品表網址設定：可填相對路徑，或可直接下載 Excel 的 HTTPS 網址。
+// 跨網域網址須由檔案伺服器允許 CORS；不要填分享預覽頁面網址。
+const PRODUCT_FILE_URL = './data.xlsx';
+let productsLoading=false,scanHeld=false,holdConsumed=false,holdPointerId=null;
+const products=new Map(),barcodeIndex=new Map(),skuIndex=new Map(),conflictIds=new Set(),cart=new Map();let scanner=null,scanning=false,lastCode='',lastAt=0;const $=x=>document.getElementById(x);
+function code(v){return String(v??'').trim().replace(/\.0$/,'')}
+function load(rows){
+  const next=new Map(),nextBarcode=new Map(),nextSku=new Map(),conflicts=new Set();let bad=0;
+  function index(map,key,id){if(!key)return;if(!map.has(key))map.set(key,new Set());map.get(key).add(id)}
+  rows.forEach(r=>{
+    const sku=code(r[2]),barcode=code(r[3]),name=String(r[5]??'').trim(),raw=r[14];
+    const points=typeof raw==='number'?raw:Number(String(raw??'').replace(/[ ,，點]/g,''));
+    if((!barcode&&!sku)||!name||String(raw??'').trim()===''||!Number.isFinite(points)||points<0){bad++;return}
+    const id=sku?'sku:'+sku:'barcode:'+barcode;
+    const product={id,sku,barcode,name,points};
+    const previous=next.get(id);
+    if(previous&&JSON.stringify(previous)!==JSON.stringify(product))conflicts.add(id);
+    else if(!previous)next.set(id,product);
+    index(nextBarcode,barcode,id);index(nextSku,sku,id);
+  });
+  if(!next.size)throw Error('找不到有效商品，請確認 C（貨號）、D（國際條碼）、F（品名）、O（換購點數）欄');
+  products.clear();barcodeIndex.clear();skuIndex.clear();conflictIds.clear();
+  next.forEach((v,k)=>products.set(k,v));nextBarcode.forEach((v,k)=>barcodeIndex.set(k,v));nextSku.forEach((v,k)=>skuIndex.set(k,v));conflicts.forEach(id=>conflictIds.add(id));
+  $('count').textContent='商品 '+products.size+' 筆';
+  $('imp').textContent='載入完成：'+products.size+' 筆商品；支援國際條碼及貨號'+(bad?'；略過 '+bad+' 筆資料缺漏':'')+(conflicts.size?'；'+conflicts.size+' 個商品資料衝突，暫停計點':'');
+}
+function findProduct(input){
+  const mode=$('lookupMode').value,ids=new Set();
+  if(mode!=='sku')for(const id of barcodeIndex.get(input)||[])ids.add(id);
+  if(mode!=='barcode')for(const id of skuIndex.get(input)||[])ids.add(id);
+  if(!ids.size)throw Error('找不到條碼或貨號 '+input+'，請確認 C、D 欄');
+  if(ids.size>1)throw Error('此代碼對應多個商品，請選擇「貨號」或使用商品的唯一貨號');
+  const id=ids.values().next().value;
+  if(conflictIds.has(id))throw Error('此貨號的品名、條碼或點數不一致，請先修正商品表');
+  return products.get(id);
+}
+async function loadProductsFromUrl(){
+  if(productsLoading)return;
+  productsLoading=true;
+  $('imp').textContent='正在載入商品資料…';
+  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),20000);
+  try{
+    if(location.protocol==='file:')throw Error('請將網頁與商品表放在網站上，使用 HTTPS 網址開啟');
+    if(!window.XLSX)throw Error('Excel 程式庫載入失敗，請確認網路');
+    if(!PRODUCT_FILE_URL.trim())throw Error('請在程式碼設定 PRODUCT_FILE_URL');
+    const url=new URL(PRODUCT_FILE_URL,document.baseURI);
+    if(!['http:','https:'].includes(url.protocol))throw Error('商品表必須使用 HTTP 或 HTTPS 網址');
+    const response=await fetch(url.href,{cache:'no-store',signal:controller.signal});
+    if(!response.ok)throw Error('商品表下載失敗（HTTP '+response.status+'），請確認檔案網址');
+    if((response.headers.get('content-type')||'').includes('text/html'))throw Error('網址回傳網頁，請設定可直接下載的網址');
+    const wb=XLSX.read(await response.arrayBuffer(),{type:'array',raw:true,cellNF:true});
+    const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,defval:'',raw:true});
+    if(rows.length<2)throw Error('找不到商品資料');
+    const sheet=wb.Sheets[wb.SheetNames[0]];rows.forEach((row,i)=>{for(const column of [2,3]){const cell=sheet[XLSX.utils.encode_cell({r:i,c:column})];if(cell&&cell.t==='n'&&/^0+$/.test(cell.z||'')&&cell.w)row[column]=cell.w}});load(rows.slice(1));
+  }catch(err){
+    let message=err.name==='AbortError'?'下載逾時，請確認網路後重新載入':err.message;
+    if(err instanceof TypeError)message='無法下載商品表，請確認網路、檔案網址及跨網域存取設定（CORS）';
+    $('imp').textContent='載入失敗：'+message+(products.size?'。目前保留原有商品資料。':'');
+  }finally{
+    clearTimeout(timeout);productsLoading=false;
+  }
+}
+
+
+let audioContext=null,lastAddAt=0;
+function soundStatus(message){$('soundStatus').textContent=message}
+function prepareAudio(){
+  try{
+    const Ctx=window.AudioContext||window.webkitAudioContext;
+    if(!Ctx){soundStatus('此瀏覽器不支援音效，請改用 Safari 或 Chrome。');return Promise.resolve(false)}
+    if(!audioContext||audioContext.state==='closed')audioContext=new Ctx();
+    // 在使用者點擊事件內立即建立並恢復音效，避免相機的非同步回呼失去使用者操作權限。
+    const resumed=audioContext.state==='running'?Promise.resolve():audioContext.resume();
+    const buffer=audioContext.createBuffer(1,1,audioContext.sampleRate);
+    const source=audioContext.createBufferSource();source.buffer=buffer;
+    source.connect(audioContext.destination);source.onended=()=>source.disconnect();source.start(0);
+    return Promise.resolve(resumed).then(()=>{
+      const ready=audioContext.state==='running';
+      soundStatus(ready?'音效已啟用。若聽不到聲音，請提高媒體音量並關閉靜音。':'音效暫停：請再次點「測試嗶聲」。');
+      return ready;
+    }).catch(()=>{soundStatus('音效啟用失敗，請點「測試嗶聲」重試。');return false});
+  }catch(e){soundStatus('音效啟用失敗，請點「測試嗶聲」重試。');return Promise.resolve(false)}
+}
+async function beep(success){
+  try{
+    if(!audioContext||audioContext.state!=='running')if(!await prepareAudio())return;
+    const ctx=audioContext,t=ctx.currentTime;
+    // 手持掃描機風格：短促高頻方波；錯誤時播放兩段低頻提示。
+    const tones=success?[{f:2700,offset:0,duration:0.10}]:[{f:480,offset:0,duration:0.12},{f:380,offset:0.18,duration:0.12}];
+    for(const tone of tones){
+      const osc=ctx.createOscillator(),gain=ctx.createGain(),start=t+tone.offset,end=start+tone.duration;
+      osc.type='square';osc.frequency.setValueAtTime(tone.f,start);
+      gain.gain.setValueAtTime(0.0001,start);
+      gain.gain.exponentialRampToValueAtTime(success?0.12:0.10,start+0.003);
+      gain.gain.setValueAtTime(success?0.12:0.10,end-0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001,end);
+      osc.connect(gain);gain.connect(ctx.destination);
+      osc.onended=()=>{osc.disconnect();gain.disconnect()};osc.start(start);osc.stop(end+0.005);
+    }
+  }catch(e){soundStatus('音效播放失敗，請點「測試嗶聲」重試。')}
+}
+$('testSound').onclick=()=>{const ready=prepareAudio();ready.then(ok=>{if(ok)beep(true)})};
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState==='hidden')releaseScan();
+  if(document.visibilityState==='visible'&&audioContext&&audioContext.state!=='running')soundStatus('回到頁面後音效可能暫停，請點「測試嗶聲」重新啟用。');
+});
+function beginScan(){
+  if(!scanning)return;
+  if(productsLoading||!products.size){$('scanStatus').textContent='商品表尚未載入完成，請確認 data 檔案';return}
+  if(scanHeld)return;
+  prepareAudio();scanHeld=true;holdConsumed=false;lastAddAt=0;
+  $('holdScan').setAttribute('aria-pressed','true');$('holdScan').textContent='掃描中…請持續按住';
+  $('scanStatus').textContent='請對準商品條碼，辨識成功後放開按鈕';
+}
+function releaseScan(){
+  scanHeld=false;holdPointerId=null;
+  $('holdScan').setAttribute('aria-pressed','false');$('holdScan').textContent='按住掃描';
+}
+$('holdScan').addEventListener('pointerdown',e=>{
+  if((e.pointerType==='mouse'&&e.button!==0)||holdPointerId!==null)return;
+  e.preventDefault();holdPointerId=e.pointerId;
+  try{$('holdScan').setPointerCapture(e.pointerId)}catch(err){}
+  beginScan();
+});
+for(const event of ['pointerup','pointercancel','lostpointercapture']){
+  $('holdScan').addEventListener(event,e=>{if(e.pointerId===holdPointerId)releaseScan()});
+}
+$('holdScan').addEventListener('contextmenu',e=>e.preventDefault());
+$('holdScan').addEventListener('keydown',e=>{if(e.key===' '||e.key==='Enter'){e.preventDefault();if(!e.repeat)beginScan()}});
+$('holdScan').addEventListener('keyup',e=>{if(e.key===' '||e.key==='Enter'){e.preventDefault();releaseScan()}});
+$('holdScan').addEventListener('blur',releaseScan);
+window.addEventListener('blur',releaseScan);
+function add(c){
+  if(productsLoading){$('scanStatus').textContent='商品資料載入中，請稍候再掃描';return}
+  if(!products.size){$('scanStatus').textContent='商品資料尚未載入，請確認商品表載入狀態';return}
+  const now=Date.now();if(now-lastAddAt<1000)return;lastAddAt=now;
+  c=code(c);
+  try{
+    if(!c)throw Error('請輸入條碼或貨號');
+    const p=findProduct(c),id=p.id;let item=cart.get(id);
+    if(item)item.qty++;else cart.set(id,{...p,qty:1});
+    beep(true);$('scanStatus').textContent='成功計點：'+p.name+'（貨號 '+(p.sku||'未提供')+'；'+p.points+' 點／件）';$('manual').value='';render();
+  }catch(err){beep(false);$('scanStatus').textContent='失敗：'+err.message;$('manual').value=''}
+}
+function render(){let body=$('rows');body.innerHTML='';let qty=0,points=0;if(!cart.size)body.innerHTML='<tr><td colspan="5" class="empty">尚未掃描商品</td></tr>';for(let [c,x] of cart){qty+=x.qty;points+=x.qty*x.points;let tr=document.createElement('tr'),name=document.createElement('td');name.textContent=x.name;name.append(document.createElement('br'));let sm=document.createElement('small');sm.textContent='貨號：'+(x.sku||'未提供')+'／條碼：'+(x.barcode||'未提供');sm.style.color='#777';name.append(sm);let pt=document.createElement('td');pt.className='num';pt.textContent=x.points+' 點';let q=document.createElement('td');q.className='num';let ctl=document.createElement('div');ctl.className='qty';let m=document.createElement('button');m.className='secondary';m.textContent='−';m.onclick=()=>change(c,-1);let b=document.createElement('b');b.textContent=x.qty;let plus=document.createElement('button');plus.className='secondary';plus.textContent='+';plus.onclick=()=>change(c,1);ctl.append(m,b,plus);q.append(ctl);let sub=document.createElement('td');sub.className='num';sub.textContent=x.qty*x.points+' 點';let del=document.createElement('td'),db=document.createElement('button');db.className='danger';db.textContent='刪除';db.onclick=()=>{cart.delete(c);render()};del.append(db);tr.append(name,pt,q,sub,del);body.append(tr)}$('kinds').textContent=cart.size+' 種';$('qty').textContent=qty+' 件';$('points').textContent=points.toLocaleString()+' 點'}
+function change(c,d){let x=cart.get(c);x.qty+=d;if(x.qty<=0)cart.delete(c);render()}
+$('add').onclick=()=>{prepareAudio();add($('manual').value)};$('manual').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();prepareAudio();add($('manual').value)}};
+$('clear').onclick=()=>{if(cart.size&&confirm('確定清空本次計點清單？')){cart.clear();render()}};
+$('start').onclick=async()=>{const audioReady=prepareAudio();audioReady.then(ok=>{if(ok)beep(true)});if(!window.Html5Qrcode){$('scanStatus').textContent='掃碼程式載入失敗，請確認網路';return}if(!window.isSecureContext){$('scanStatus').textContent='相機需要 HTTPS 網址，請先部署網頁';return}try{scanner=new Html5Qrcode('reader');await scanner.start({facingMode:'environment'},{fps:10,qrbox:{width:260,height:130},aspectRatio:1.6,formatsToSupport:[Html5QrcodeSupportedFormats.EAN_13,Html5QrcodeSupportedFormats.EAN_8,Html5QrcodeSupportedFormats.UPC_A,Html5QrcodeSupportedFormats.UPC_E,Html5QrcodeSupportedFormats.CODE_128,Html5QrcodeSupportedFormats.CODE_39,Html5QrcodeSupportedFormats.ITF]},v=>{if(!scanHeld||holdConsumed||productsLoading||!products.size)return;holdConsumed=true;add(v);$('holdScan').textContent='已掃描，請放開後再按住';},()=>{});scanning=true;$('start').disabled=true;$('stop').disabled=false;$('holdScan').disabled=false;$('scanStatus').textContent='相機已開啟，請按住「按住掃描」對準商品條碼'}catch(e){$('scanStatus').textContent='無法開啟相機：'+(e.message||e)+'。請檢查相機權限'}};
+$('stop').onclick=async()=>{releaseScan();$('holdScan').disabled=true;if(scanner&&scanning){try{await scanner.stop();scanner.clear()}catch(e){}scanning=false;$('start').disabled=false;$('stop').disabled=true;$('scanStatus').textContent='掃描已停止'}};
+$('export').onclick=()=>{if(!cart.size){alert('目前沒有計點資料');return}let rows=[['貨號','國際條碼','品名','每件換購點數','數量','點數小計'],...Array.from(cart.values(),x=>[x.sku||'',x.barcode||'',x.name,x.points,x.qty,x.points*x.qty]),['','','','','總計',Array.from(cart.values()).reduce((s,x)=>s+x.points*x.qty,0)]],csv=rows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\r\n'),blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='計點明細_'+new Date().toISOString().slice(0,10)+'.csv';a.click();URL.revokeObjectURL(a.href)};
+render();
+loadProductsFromUrl();
+</script></body></html>
