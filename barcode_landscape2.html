@@ -221,11 +221,7 @@ async function reconcileCamera(){
       const formats=[Html5QrcodeSupportedFormats.EAN_13,Html5QrcodeSupportedFormats.EAN_8,Html5QrcodeSupportedFormats.UPC_A,Html5QrcodeSupportedFormats.UPC_E,Html5QrcodeSupportedFormats.CODE_128,Html5QrcodeSupportedFormats.CODE_39,Html5QrcodeSupportedFormats.ITF];
       scanner=new Html5Qrcode('reader',{formatsToSupport:formats,verbose:false});
       await scanner.start({facingMode:'environment'},{fps:10,aspectRatio:16/9,
-        qrbox:(width,height)=>{
-          const portrait=window.matchMedia('(orientation:portrait)').matches;
-          return {width:Math.min(260,Math.max(50,Math.floor(width*0.88))),
-            height:portrait?Math.max(50,Math.floor(height*0.90)):Math.min(130,Math.max(50,Math.floor(height*0.7)))};
-        }
+        qrbox:(width,height)=>({width:Math.min(260,Math.max(50,Math.floor(width*0.88))),height:Math.min(130,Math.max(50,Math.floor(height*0.7)))})
       },v=>{
         if(!cameraWanted||cameraBusy||cameraOrientationTimer||!scanHeld||holdConsumed||productsLoading||!products.size)return;
         holdConsumed=true;add(v);$('holdScan').textContent='已掃描，請放開後再按住';
